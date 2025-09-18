@@ -16,7 +16,14 @@ def get_portfolio_rolling_volatility(pf_returns, window=21):
 
 @pf.register_series_method
 def get_portfolio_rolling_beta(pf_returns, mkt_returns, window=21):
+    pf_returns = pf_returns.copy().fillna(0.0)
+    mkt_returns = mkt_returns.copy().reindex(pf_returns.index).fillna(0.0)
     return pf_returns.rolling(window).cov(mkt_returns).div(mkt_returns.rolling(window).var())
+
+
+@pf.register_dataframe_method
+def get_portfolio_exante_beta(pf_positions, asset_betas):
+    return pf_positions.mul(asset_betas, axis=1, fill_value=0.0).sum(axis=1).rename('pf_exante_beta')
 
 
 def calc_dollar_neutral(position):
@@ -27,8 +34,12 @@ def calc_dollar_neutral(position):
     return position
 
 
-def calc_beta_neutral_hedge(pf_returns, mkt_returns, window=21):
-    pf_beta = get_portfolio_rolling_beta(pf_returns, mkt_returns, window)
+def calc_beta_neutral_hedge(pf_returns, mkt_returns, window=21, beta_type=None, pf_positions=None, asset_betas=None):
+    beta_type = 'expost' if beta_type is None else beta_type
+    if beta_type == 'expost':
+        pf_beta = get_portfolio_rolling_beta(pf_returns, mkt_returns, window)
+    if beta_type == 'exante':
+        pf_beta = pf_positions.get_portfolio_exante_beta(asset_betas)
     return pf_beta.shift(1).mul(-1).bfill().rename(mkt_returns.name) 
 
 
@@ -39,7 +50,7 @@ def calc_gearing_factor(pf_vols, target_vol=0.1, max_gearing=None):
     return gearing_factor.shift(1).fillna(0.0) 
 
 
-def position_function(signal_df, returns_df, market_returns_df, target_vol=0.1, dollar_neutral=False, beta_neutral=False, max_gearing=None, max_posn=None, window=21):
+def position_function(signal_df, returns_df, market_returns_df, target_vol=0.1, dollar_neutral=False, beta_neutral=False, max_gearing=None, max_posn=None, window=21, beta_type=None, asset_betas=None):
     '''
     Transforms a signal dataframe into position sizes with various portfolio construction constraints.
     This function takes signal values and applies portfolio construction techniques including 
@@ -89,7 +100,7 @@ def position_function(signal_df, returns_df, market_returns_df, target_vol=0.1, 
         pf_rets = get_portfolio_returns(position_df, rets_df)
    
     if beta_neutral:
-        beta_hedge = calc_beta_neutral_hedge(pf_rets, mkt_rets_df)
+        beta_hedge = calc_beta_neutral_hedge(pf_rets, mkt_rets_df, pf_positions=position_df, beta_type=beta_type, asset_betas=asset_betas)
         position_df = pd.concat([position_df, beta_hedge], axis=1).fillna(0.0)
         rets_df = pd.concat([rets_df, mkt_rets_df], axis=1).fillna(0.0)
         pf_rets = get_portfolio_returns(position_df, rets_df)
